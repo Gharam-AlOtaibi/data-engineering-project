@@ -1,0 +1,124 @@
+# Code for ETL operations on Country-GDP data
+
+# Importing the required libraries
+import pandas as pd
+import requests
+from bs4 import BeautifulSoup
+import datetime
+import numpy as np
+import sqlite3
+import os
+
+### Task 1 ###
+def log_progress(message):
+    timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    log_entry = f"{timestamp} : {message}\n"
+    
+    with open('./code_log.txt', 'a') as log_file:
+        log_file.write(log_entry)
+
+# Remove the existing log file
+try:
+    os.remove("code_log.txt")
+except FileNotFoundError:
+    pass  # File not found, ignore
+
+# Log entry for completion
+log_progress("Preliminaries complete. Initiating ETL process")
+
+### Task 2 ###
+def extract(url, table_attribs):
+    log_progress("Data extraction started.")
+    
+    # Download the webpage content
+    response = requests.get(url)
+    soup = BeautifulSoup(response.text, 'html.parser')
+
+    # Find the table containing the required information
+    table = soup.find('table', table_attribs)
+
+    # Convert the HTML table to a pandas DataFrame
+    df = pd.read_html(str(table))[0]
+
+    # Remove '\n' from Market Cap column and typecast to float
+    df['Market cap (US$ billion)'] = df['Market cap (US$ billion)'].astype(str).str.replace('\n', '').astype(float)
+
+    log_progress("Data extraction complete.")
+    return df
+
+# Call the extract function
+url = "https://web.archive.org/web/20230908091635/https://en.wikipedia.org/wiki/List_of_largest_banks"
+table_attribs = {'class': 'wikitable'}
+extracted_df = extract(url, table_attribs)
+
+# Print the returned data frame
+print(extracted_df)
+
+### Task 3 ###
+def transform(df, csv_path):
+    log_progress("Data transformation started.")
+    
+    # Read exchange rate CSV file and convert to dictionary
+    exchange_rate_df = pd.read_csv(csv_path, index_col=0)
+    exchange_rate = exchange_rate_df.squeeze().to_dict()
+
+    # Add columns for Market Capitalization in GBP, EUR, and INR
+    df['MC_GBP_Billion'] = np.round(df['Market cap (US$ billion)'] * exchange_rate['GBP'], 2)
+    df['MC_EUR_Billion'] = np.round(df['Market cap (US$ billion)'] * exchange_rate['EUR'], 2)
+    df['MC_INR_Billion'] = np.round(df['Market cap (US$ billion)'] * exchange_rate['INR'], 2)
+
+    log_progress("Data transformation complete.")
+    return df
+
+# Call the transform function
+exchange_rate_csv = "https://cf-courses-data.s3.us.cloud-object-storage.appdomain.cloud/IBMSkillsNetwork-PY0221EN-Coursera/labs/v2/exchange_rate.csv"
+transformed_df = transform(extracted_df, exchange_rate_csv)
+
+# Print the returning data frame
+print(transformed_df)
+
+### Task 4 ###
+def load_to_csv(df, output_path):
+    log_progress("Data loading to CSV started.")
+    df.to_csv(output_path, index=False)
+    log_progress("Data loaded to CSV file.")
+
+csv_output_path = "./Largest_banks_data.csv"
+load_to_csv(transformed_df, csv_output_path)
+
+### Task 5 ###
+def load_to_db(df, sql_connection, table_name):
+    log_progress("Data loading to database started.")
+    df.to_sql(table_name, sql_connection, index=False, if_exists='replace')
+    log_progress("Data loaded to database table.")
+
+# Initiate SQLite3 connection
+db_connection = sqlite3.connect("Banks.db")
+
+# Call the load_to_db function
+table_name = "Largest_banks"
+load_to_db(transformed_df, db_connection, table_name)
+
+### Task 6 ###
+def run_queries(query_statement, sql_connection):
+    log_progress(f"Executing query: {query_statement}")
+    result = pd.read_sql_query(query_statement, sql_connection)
+    print(result)
+
+# Example queries
+query_1 = "SELECT * FROM Largest_banks"
+query_2 = "SELECT AVG(MC_GBP_Billion) FROM Largest_banks"
+query_3 = "SELECT [Bank name] FROM Largest_banks LIMIT 5"
+
+# Execute queries
+run_queries(query_1, db_connection)
+run_queries(query_2, db_connection)
+run_queries(query_3, db_connection)
+
+# Log entry for completion
+log_progress("Query execution complete.")
+
+### Task 7 ###
+# Verify log entries
+with open('./code_log.txt', 'r') as log_file:
+    print(log_file.read())
